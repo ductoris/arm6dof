@@ -1,0 +1,174 @@
+#include <ESP32Servo.h>
+
+Servo servo1;
+Servo servo2;
+Servo servo3;
+Servo servo4;
+Servo servo5;
+Servo servo6;
+
+// Chân điều khiển 6 servo
+const int SERVO1_PIN = 23;
+const int SERVO2_PIN = 22;
+const int SERVO3_PIN = 21;
+const int SERVO4_PIN = 19;
+const int SERVO5_PIN = 18;
+const int SERVO6_PIN = 5;
+
+// Góc hiện tại của từng servo
+int angle1 = 90; // 1 - 90, xoay trai 90+, xoay phai 90-
+int angle2 = 110; // 2 - 110, len 110+, xuong 110-
+int angle3 = 80; // 3 - 80, len 80-, xuong 80+
+int angle4 = 90; // 4 - 90, xoay trai 90-; xoay phai 90+
+int angle5 = 90; // 5 - 90, xuong 90-; len 90+
+int angle6 = 80; // 6 - 80, gắp 80-; mở: max = 80.
+
+void setup() {
+  Serial.begin(115200);
+
+  servo1.setPeriodHertz(50);
+  servo2.setPeriodHertz(50);
+  servo3.setPeriodHertz(50);
+  servo4.setPeriodHertz(50);
+  servo5.setPeriodHertz(50);
+  servo6.setPeriodHertz(50);
+
+  servo1.attach(SERVO1_PIN, 500, 2500);
+  servo2.attach(SERVO2_PIN, 500, 2500);
+  servo3.attach(SERVO3_PIN, 500, 2500);
+  servo4.attach(SERVO4_PIN, 500, 2500);
+  servo5.attach(SERVO5_PIN, 500, 2500);
+  servo6.attach(SERVO6_PIN, 500, 2500);
+
+  // Đưa tất cả servo về 90 độ lúc ban đầu
+  servo1.write(angle1);
+  servo2.write(angle2);
+  servo3.write(angle3);
+  servo4.write(angle4);
+  servo5.write(angle5);
+  servo6.write(angle6);
+
+  Serial.println("=== DIEU KHIEN 6 SERVO MG996R BANG ESP32 ===");
+  Serial.println("Cu phap:");
+  Serial.println("1 90    -> servo 1 quay den 90 do");
+  Serial.println("2 120   -> servo 2 quay den 120 do");
+  Serial.println("all 90  -> tat ca servo quay den 90 do");
+  Serial.println();
+}
+
+void loop() {
+  if (Serial.available() > 0) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+
+    if (input.startsWith("all")) {
+      int spaceIndex = input.indexOf(' ');
+
+      if (spaceIndex > 0) {
+        int angle = input.substring(spaceIndex + 1).toInt();
+
+        if (angle >= 0 && angle <= 180) {
+          angle1 = angle;
+          angle2 = angle;
+          angle3 = angle;
+          angle4 = angle;
+          angle5 = angle;
+          angle6 = angle;
+
+          servo1.write(angle1);
+          servo2.write(angle2);
+          servo3.write(angle3);
+          servo4.write(angle4);
+          servo5.write(angle5);
+          servo6.write(angle6);
+
+          Serial.print("Tat ca servo da quay den goc: ");
+          Serial.print(angle);
+          Serial.println(" do");
+        } else {
+          Serial.println("Goc khong hop le. Hay nhap tu 0 den 180.");
+        }
+      }
+    } 
+    else {
+      int spaceIndex = input.indexOf(' ');
+
+      if (spaceIndex > 0) {
+        int servoNumber = input.substring(0, spaceIndex).toInt();
+        int angle = input.substring(spaceIndex + 1).toInt();
+
+        if (angle < 0 || angle > 180) {
+          Serial.println("Goc khong hop le. Hay nhap tu 0 den 180.");
+          return;
+        }
+
+        switch (servoNumber) {
+          case 1:
+            angle1 = angle;
+            servo1.write(angle1);
+            Serial.print("Servo 1 quay den ");
+            Serial.print(angle1);
+            Serial.println(" do");
+            break;
+
+          case 2:
+            angle2 = angle;
+            servo2.write(angle2);
+            Serial.print("Servo 2 quay den ");
+            Serial.print(angle2);
+            Serial.println(" do");
+            break;
+
+          case 3:
+            angle3 = angle;
+            servo3.write(angle3);
+            Serial.print("Servo 3 quay den ");
+            Serial.print(angle3);
+            Serial.println(" do");
+            break;
+
+          case 4:
+            angle4 = angle;
+            servo4.write(angle4);
+            Serial.print("Servo 4 quay den ");
+            Serial.print(angle4);
+            Serial.println(" do");
+            break;
+
+          case 5:
+            angle5 = angle;
+            servo5.write(angle5);
+            Serial.print("Servo 5 quay den ");
+            Serial.print(angle5);
+            Serial.println(" do");
+            break;
+
+          case 6:
+            angle6 = angle;
+            servo6.write(angle6);
+            Serial.print("Servo 6 quay den ");
+            Serial.print(angle6);
+            Serial.println(" do");
+            break;
+
+          default:
+            Serial.println("So servo khong hop le. Hay nhap tu 1 den 6.");
+            break;
+        }
+      } else {
+        Serial.println("Sai cu phap.");
+        Serial.println("Vi du: 1 90 hoac all 90");
+      }
+    }
+  }
+
+  // Giữ nguyên góc hiện tại
+  servo1.write(angle1);
+  servo2.write(angle2);
+  servo3.write(angle3);
+  servo4.write(angle4);
+  servo5.write(angle5);
+  servo6.write(angle6);
+
+  delay(20);
+}

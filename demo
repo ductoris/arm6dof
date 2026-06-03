@@ -1,0 +1,372 @@
+#include <ESP32Servo.h>
+
+#define NUM_SERVOS 6
+
+Servo servo[NUM_SERVOS];
+
+// Chân điều khiển 6 servo
+int servoPins[NUM_SERVOS] = {23, 22, 21, 19, 15, 5};
+
+// Góc ban đầu thực tế của từng servo
+float qCurrent[NUM_SERVOS] = {
+  90,   // Servo 1 - đế
+  110,  // Servo 2 - vai
+  80,   // Servo 3 - khuỷu
+  90,   // Servo 4 - cổ tay xoay
+  90,   // Servo 5 - cổ tay gập
+  80    // Servo 6 - gripper
+};
+
+// Giới hạn góc nên chỉnh lại theo cơ khí thực tế
+float qMin[NUM_SERVOS] = {
+  0,    // Servo 1
+  40,   // Servo 2
+  20,   // Servo 3
+  0,    // Servo 4
+  20,   // Servo 5
+  20    // Servo 6, gắp nhỏ nhất
+};
+
+float qMax[NUM_SERVOS] = {
+  180,  // Servo 1
+  170,  // Servo 2
+  150,  // Servo 3
+  180,  // Servo 4
+  160,  // Servo 5
+  80    // Servo 6, mở tối đa = 80
+};
+
+// Tư thế HOME đúng theo tay máy của bạn
+float poseHome[NUM_SERVOS] = {
+  90, 110, 80, 90, 90, 80
+};
+
+// Một số tư thế mẫu, cần chỉnh dần khi test thật
+float poseReady[NUM_SERVOS] = {
+  90, 120, 70, 90, 100, 80
+};
+
+float posePick[NUM_SERVOS] = {
+  80, 90, 120, 90, 70, 80
+};
+
+float poseGrip[NUM_SERVOS] = {
+  80, 90, 120, 90, 70, 35
+};
+
+float poseLift[NUM_SERVOS] = {
+  80, 130, 80, 90, 110, 35
+};
+
+float posePlace[NUM_SERVOS] = {
+  120, 100, 120, 90, 70, 35
+};
+
+float poseRelease[NUM_SERVOS] = {
+  120, 100, 120, 90, 70, 80
+};
+
+// Giới hạn góc
+float limitAngle(float angle, float minVal, float maxVal)
+{
+  if (angle < minVal) return minVal;
+  if (angle > maxVal) return maxVal;
+  return angle;
+}
+
+// Nội suy mềm bậc 3
+float smoothStep(float t)
+{
+  return 3 * t * t - 2 * t * t * t;
+}
+
+// Gửi góc xuống toàn bộ servo
+void writeAllServos(float q[])
+{
+  for (int i = 0; i < NUM_SERVOS; i++)
+  {
+    float angle = limitAngle(q[i], qMin[i], qMax[i]);
+    servo[i].write(angle);
+  }
+}
+
+// Chạy quỹ đạo từ qCurrent đến qTarget
+void moveTrajectory(float qTarget[], unsigned long moveTime)
+{
+  float qStart[NUM_SERVOS];
+
+  for (int i = 0; i < NUM_SERVOS; i++)
+  {
+    qStart[i] = qCurrent[i];
+  }
+
+  unsigned long startTime = millis();
+
+  while (millis() - startTime <= moveTime)
+  {
+    float t = (float)(millis() - startTime) / moveTime;
+
+    if (t > 1.0) t = 1.0;
+
+    float s = smoothStep(t);
+
+    float qTemp[NUM_SERVOS];
+
+    for (int i = 0; i < NUM_SERVOS; i++)
+    {
+      qTemp[i] = qStart[i] + (qTarget[i] - qStart[i]) * s;
+      qTemp[i] = limitAngle(qTemp[i], qMin[i], qMax[i]);
+    }
+
+    writeAllServos(qTemp);
+
+    delay(20);
+  }
+
+  for (int i = 0; i < NUM_SERVOS; i++)
+  {
+    qCurrent[i] = limitAngle(qTarget[i], qMin[i], qMax[i]);
+  }
+
+  writeAllServos(qCurrent);
+}
+
+// Hàm điều khiển gripper
+void openGripper()
+{
+  qCurrent[5] = 80;
+  servo[5].write(qCurrent[5]);
+}
+
+void closeGripper()
+{
+  qCurrent[5] = 35;
+  servo[5].write(qCurrent[5]);
+}
+
+// Demo gắp - nâng - thả
+void pickAndPlaceDemo()
+{
+  Serial.println("Ve HOME");
+  moveTrajectory(poseHome, 2000);
+  delay(500);
+
+  Serial.println("Den tu the san sang");
+  moveTrajectory(poseReady, 2000);
+  delay(500);
+
+  Serial.println("Mo kep");
+  openGripper();
+  delay(500);
+
+  Serial.println("Ha tay xuong vi tri gap");
+  moveTrajectory(posePick, 3000);
+  delay(500);
+
+  Serial.println("Gap vat");
+  closeGripper();
+  delay(800);
+
+  Serial.println("Nang vat len");
+  moveTrajectory(poseLift, 3000);
+  delay(500);
+
+  Serial.println("Di chuyen sang vi tri tha");
+  moveTrajectory(posePlace, 3000);
+  delay(500);
+
+  Serial.println("Tha vat");
+  moveTrajectory(poseRelease, 1000);
+  openGripper();
+  delay(800);
+
+  Serial.println("Quay ve HOME");
+  moveTrajectory(poseHome, 3000);
+}
+
+// Điều khiển từng servo bằng lệnh đơn giản
+void moveOneServo(int servoIndex, float delta)
+{
+  if (servoIndex < 0 || servoIndex >= NUM_SERVOS) return;
+
+  qCurrent[servoIndex] += delta;
+  qCurrent[servoIndex] = limitAngle(qCurrent[servoIndex], qMin[servoIndex], qMax[servoIndex]);
+
+  servo[servoIndex].write(qCurrent[servoIndex]);
+
+  Serial.print("Servo ");
+  Serial.print(servoIndex + 1);
+  Serial.print(" = ");
+  Serial.println(qCurrent[servoIndex]);
+}
+
+// Đọc lệnh từ Serial
+void readSerialCommand()
+{
+  if (Serial.available())
+  {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+
+    if (cmd == "home")
+    {
+      moveTrajectory(poseHome, 2000);
+    }
+    else if (cmd == "demo")
+    {
+      pickAndPlaceDemo();
+    }
+
+    // Servo 1: trai/phai
+    else if (cmd == "s1_trai")
+    {
+      moveOneServo(0, 5);
+    }
+    else if (cmd == "s1_phai")
+    {
+      moveOneServo(0, -5);
+    }
+
+    // Servo 2: len/xuong
+    else if (cmd == "s2_len")
+    {
+      moveOneServo(1, 5);
+    }
+    else if (cmd == "s2_xuong")
+    {
+      moveOneServo(1, -5);
+    }
+
+    // Servo 3: len/xuong
+    else if (cmd == "s3_len")
+    {
+      moveOneServo(2, -5);
+    }
+    else if (cmd == "s3_xuong")
+    {
+      moveOneServo(2, 5);
+    }
+
+    // Servo 4: trai/phai
+    else if (cmd == "s4_trai")
+    {
+      moveOneServo(3, -5);
+    }
+    else if (cmd == "s4_phai")
+    {
+      moveOneServo(3, 5);
+    }
+
+    // Servo 5: len/xuong
+    else if (cmd == "s5_len")
+    {
+      moveOneServo(4, 5);
+    }
+    else if (cmd == "s5_xuong")
+    {
+      moveOneServo(4, -5);
+    }
+
+    // Servo 6: gap/mo
+    else if (cmd == "gap")
+    {
+      moveOneServo(5, -10);
+    }
+    else if (cmd == "mo")
+    {
+      moveOneServo(5, 10);
+    }
+
+    // Nhập trực tiếp 6 góc
+    // Ví dụ: q 90 120 70 90 100 80
+    else if (cmd.startsWith("q"))
+    {
+      float qTarget[NUM_SERVOS];
+
+      cmd.remove(0, 1);
+      cmd.trim();
+
+      int index = 0;
+
+      while (cmd.length() > 0 && index < NUM_SERVOS)
+      {
+        int spaceIndex = cmd.indexOf(' ');
+        String value;
+
+        if (spaceIndex == -1)
+        {
+          value = cmd;
+          cmd = "";
+        }
+        else
+        {
+          value = cmd.substring(0, spaceIndex);
+          cmd = cmd.substring(spaceIndex + 1);
+          cmd.trim();
+        }
+
+        qTarget[index] = value.toFloat();
+        index++;
+      }
+
+      if (index == NUM_SERVOS)
+      {
+        moveTrajectory(qTarget, 3000);
+      }
+      else
+      {
+        Serial.println("Sai cu phap. Vi du:");
+        Serial.println("q 90 120 70 90 100 80");
+      }
+    }
+
+    else
+    {
+      Serial.println("Lenh khong hop le.");
+      Serial.println("Cac lenh co the dung:");
+      Serial.println("home, demo");
+      Serial.println("s1_trai, s1_phai");
+      Serial.println("s2_len, s2_xuong");
+      Serial.println("s3_len, s3_xuong");
+      Serial.println("s4_trai, s4_phai");
+      Serial.println("s5_len, s5_xuong");
+      Serial.println("gap, mo");
+      Serial.println("q 90 120 70 90 100 80");
+    }
+  }
+}
+
+void setup()
+{
+  Serial.begin(115200);
+
+  for (int i = 0; i < NUM_SERVOS; i++)
+  {
+    servo[i].setPeriodHertz(50);
+    servo[i].attach(servoPins[i], 500, 2500);
+  }
+
+  delay(1000);
+
+  writeAllServos(qCurrent);
+
+  Serial.println("Tay may 6DOF san sang.");
+  Serial.println("Goc ban dau:");
+  Serial.println("S1 = 90, S2 = 110, S3 = 80, S4 = 90, S5 = 90, S6 = 80");
+  Serial.println();
+  Serial.println("Nhap lenh:");
+  Serial.println("home");
+  Serial.println("demo");
+  Serial.println("s1_trai / s1_phai");
+  Serial.println("s2_len / s2_xuong");
+  Serial.println("s3_len / s3_xuong");
+  Serial.println("s4_trai / s4_phai");
+  Serial.println("s5_len / s5_xuong");
+  Serial.println("gap / mo");
+  Serial.println("q 90 120 70 90 100 80");
+}
+
+void loop()
+{
+  readSerialCommand();
+}

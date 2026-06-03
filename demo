@@ -5,7 +5,7 @@
 Servo servo[NUM_SERVOS];
 
 // Chân điều khiển 6 servo
-int servoPins[NUM_SERVOS] = {23, 22, 21, 19, 15, 5};
+int servoPins[NUM_SERVOS] = {23, 22, 21, 19, 5, 17};
 
 // Góc ban đầu thực tế của từng servo
 float qCurrent[NUM_SERVOS] = {

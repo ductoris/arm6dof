@@ -1,0 +1,74 @@
+import numpy as np
+
+def inverse_kinematics(x, y, z, phi_deg=0.0):
+    """
+    Tính Động học nghịch (IK) cho robot từ vị trí EE (x, y, z)
+    phi_deg: Góc tiếp cận tổng của cổ tay (thường chọn 0 độ để gripper hướng song song mặt đất)
+    """
+    # Kích thước các khâu (đơn vị: mét)
+    d1 = 0.094
+    L1 = 0.14
+    L2 = 0.103
+    L3 = 0.09
+    
+    # Góc cổ tay tổng bằng radian
+    phi = np.radians(phi_deg)
+    
+    # 1. Tính góc khớp xoay đế theta1
+    theta1 = np.arctan2(y, x)
+    
+    # 2. Chiếu tọa độ lên mặt phẳng phẳng đứng 2D (r, z_prime)
+    r = np.sqrt(x**2 + y**2)
+    z_prime = z - d1
+    
+    # 3. Tính vị trí tâm khớp 4 (Wrist Center) trước khi có khâu kẹp 0.09
+    r_w = r - L3 * np.cos(phi)
+    z_w = z_prime - L3 * np.sin(phi)
+    
+    # 4. Giải bài toán hình học phẳng cho tam giác tạo bởi L1 và L2
+    # Áp dụng định lý hàm số cos để tìm theta3
+    D = (r_w**2 + z_w**2 - L1**2 - L2**2) / (2 * L1 * L2)
+    
+    # Kiểm tra xem điểm mục tiêu có nằm ngoài tầm với của cánh tay không
+    if abs(D) > 1.0:
+        raise ValueError("Vị trí mục tiêu nằm ngoài tầm với hình học của robot!")
+        
+    # Nghiệm khớp khuỷu (Cấu hình gập xuống - Elbow Down)
+    theta3 = np.arctan2(-np.sqrt(1 - D**2), D)
+    # Nếu muốn cấu hình gập lên (Elbow Up), dùng dòng lệnh dưới:
+    # theta3 = np.arctan2(np.sqrt(1 - D**2), D)
+    
+    # 5. Tính toán góc khớp vai theta2
+    gamma = np.arctan2(z_w, r_w)
+    alpha = np.arctan2(L2 * np.sin(theta3), L1 + L2 * np.cos(theta3))
+    theta2 = gamma - alpha
+    
+    # 6. Tính toán góc khớp cổ tay theta4 dựa vào góc tổng phi
+    theta4 = phi - theta2 - theta3
+    
+    # Chuyển đổi toàn bộ kết quả đầu ra sang độ (degrees) cho dễ đọc
+    return {
+        "theta1": np.degrees(theta1),
+        "theta2": np.degrees(theta2),
+        "theta3": np.degrees(theta3),
+        "theta4": np.degrees(theta4)
+    }
+
+# ================= KỊCH BẢN KIỂM TRA ĐÚNG SAI =================
+if __name__ == "__main__":
+    # Điền tọa độ vị trí mục tiêu mong muốn (x, y, z) tại đây để thử nghiệm:
+    target_x = 0.20
+    target_y = 0.10
+    target_z = 0.15
+    
+    try:
+        joints = inverse_kinematics(target_x, target_y, target_z, phi_deg=0.0)
+        
+        print(f"--- Kết quả Động học nghịch cho vị trí ({target_x}, {target_y}, {target_z}) ---")
+        print(f"Khớp 1 (Xoay đế) : {joints['theta1']:.2f}°")
+        print(f"Khớp 2 (Vai)     : {joints['theta2']:.2f}°")
+        print(f"Khớp 3 (Khuỷu)   : {joints['theta3']:.2f}°")
+        print(f"Khớp 4 (Cổ tay)  : {joints['theta4']:.2f}°")
+        
+    except ValueError as e:
+        print(e)

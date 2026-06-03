@@ -1,52 +1,113 @@
 import numpy as np
 
-def inverse_kinematics(x, y, z, phi_deg=0.0):
+
+# ============================================================
+# CẤU HÌNH KÍCH THƯỚC ROBOT
+# Đơn vị: mét
+# ============================================================
+
+d1 = 0.094   # chiều cao từ mặt đế lên khớp vai
+L1 = 0.14    # chiều dài khâu 1
+L2 = 0.103   # chiều dài khâu 2
+L3 = 0.11    # từ cổ tay tới EE / đầu kẹp
+
+
+# ============================================================
+# GÓC HOME THỰC TẾ CỦA SERVO
+# ============================================================
+
+SERVO1_HOME = 90
+SERVO2_HOME = 110
+SERVO3_HOME = 80
+SERVO4_HOME = 90
+SERVO5_HOME = 90
+SERVO6_OPEN = 80
+SERVO6_CLOSE = 0
+
+
+# ============================================================
+# GÓC HÌNH HỌC TƯƠNG ỨNG VỚI TƯ THẾ HOME
+# ============================================================
+# Theo mô tả của bạn:
+# - Khâu 1 hướng lên
+# - Khâu 2 hướng sang ngang
+# - Đầu kẹp gần nằm ngang
+
+THETA1_HOME = 0       # theta1 = 0° <=> servo1 = 90°
+THETA2_HOME = 90      # theta2 = 90° <=> servo2 = 110°
+THETA3_HOME = -90     # theta3 = -90° <=> servo3 = 80°
+THETA4_HOME = 0       # theta4 = 0° <=> servo5 = 90°
+
+
+# ============================================================
+# HÀM ĐỘNG HỌC NGHỊCH
+# ============================================================
+
+def inverse_kinematics(x, y, z, phi_deg=0.0, elbow="down"):
     """
-    Tính Động học nghịch (IK) cho robot từ vị trí EE (x, y, z)
-    phi_deg: Góc tiếp cận tổng của cổ tay (thường chọn 0 độ để gripper hướng song song mặt đất)
+    Tính động học nghịch cho tay máy.
+
+    Tham số:
+    - x, y, z: tọa độ điểm cuối EE, đơn vị mét
+    - phi_deg: góc hướng của đầu kẹp so với phương ngang, đơn vị độ
+               phi = 0° nghĩa là đầu kẹp nằm ngang
+    - elbow:
+        "down": cấu hình khuỷu gập xuống
+        "up"  : cấu hình khuỷu gập lên
+
+    Trả về:
+    - theta1, theta2, theta3, theta4 theo độ
     """
-    # Kích thước các khâu (đơn vị: mét)
-    d1 = 0.094
-    L1 = 0.14
-    L2 = 0.103
-    L3 = 0.09
-    
-    # Góc cổ tay tổng bằng radian
+
     phi = np.radians(phi_deg)
-    
-    # 1. Tính góc khớp xoay đế theta1
+
+    # ------------------------------------------------------------
+    # 1. Tính góc xoay đế
+    # ------------------------------------------------------------
     theta1 = np.arctan2(y, x)
-    
-    # 2. Chiếu tọa độ lên mặt phẳng phẳng đứng 2D (r, z_prime)
+
+    # ------------------------------------------------------------
+    # 2. Chiếu tọa độ EE về mặt phẳng làm việc của tay máy
+    # ------------------------------------------------------------
     r = np.sqrt(x**2 + y**2)
     z_prime = z - d1
-    
-    # 3. Tính vị trí tâm khớp 4 (Wrist Center) trước khi có khâu kẹp 0.09
+
+    # ------------------------------------------------------------
+    # 3. Tính vị trí tâm cổ tay
+    # ------------------------------------------------------------
     r_w = r - L3 * np.cos(phi)
     z_w = z_prime - L3 * np.sin(phi)
-    
-    # 4. Giải bài toán hình học phẳng cho tam giác tạo bởi L1 và L2
-    # Áp dụng định lý hàm số cos để tìm theta3
+
+    # ------------------------------------------------------------
+    # 4. Giải tam giác phẳng L1 - L2
+    # ------------------------------------------------------------
     D = (r_w**2 + z_w**2 - L1**2 - L2**2) / (2 * L1 * L2)
-    
-    # Kiểm tra xem điểm mục tiêu có nằm ngoài tầm với của cánh tay không
+
     if abs(D) > 1.0:
-        raise ValueError("Vị trí mục tiêu nằm ngoài tầm với hình học của robot!")
-        
-    # Nghiệm khớp khuỷu (Cấu hình gập xuống - Elbow Down)
-    theta3 = np.arctan2(-np.sqrt(1 - D**2), D)
-    # Nếu muốn cấu hình gập lên (Elbow Up), dùng dòng lệnh dưới:
-    # theta3 = np.arctan2(np.sqrt(1 - D**2), D)
-    
-    # 5. Tính toán góc khớp vai theta2
+        raise ValueError(
+            "Vị trí mục tiêu nằm ngoài tầm với hình học của robot!"
+        )
+
+    if elbow == "down":
+        theta3 = np.arctan2(-np.sqrt(1 - D**2), D)
+    elif elbow == "up":
+        theta3 = np.arctan2(np.sqrt(1 - D**2), D)
+    else:
+        raise ValueError("elbow chỉ được chọn là 'down' hoặc 'up'.")
+
     gamma = np.arctan2(z_w, r_w)
-    alpha = np.arctan2(L2 * np.sin(theta3), L1 + L2 * np.cos(theta3))
+    alpha = np.arctan2(
+        L2 * np.sin(theta3),
+        L1 + L2 * np.cos(theta3)
+    )
+
     theta2 = gamma - alpha
-    
-    # 6. Tính toán góc khớp cổ tay theta4 dựa vào góc tổng phi
+
+    # ------------------------------------------------------------
+    # 5. Tính góc cổ tay để đạt hướng phi
+    # ------------------------------------------------------------
     theta4 = phi - theta2 - theta3
-    
-    # Chuyển đổi toàn bộ kết quả đầu ra sang độ (degrees) cho dễ đọc
+
     return {
         "theta1": np.degrees(theta1),
         "theta2": np.degrees(theta2),
@@ -54,21 +115,290 @@ def inverse_kinematics(x, y, z, phi_deg=0.0):
         "theta4": np.degrees(theta4)
     }
 
-# ================= KỊCH BẢN KIỂM TRA ĐÚNG SAI =================
-if __name__ == "__main__":
-    # Điền tọa độ vị trí mục tiêu mong muốn (x, y, z) tại đây để thử nghiệm:
+
+# ============================================================
+# ĐỔI GÓC HÌNH HỌC SANG GÓC SERVO THỰC TẾ
+# ============================================================
+
+def ik_to_servo_angles(joints, gripper="open"):
+    """
+    Chuyển góc IK sang góc servo thực tế.
+
+    Quy ước:
+    - theta1 = 0°   <=> servo1 = 90°
+    - theta2 = 90°  <=> servo2 = 110°
+    - theta3 = -90° <=> servo3 = 80°
+    - theta4 = 0°   <=> servo5 = 90°
+
+    gripper:
+    - "open"  : servo6 = 80
+    - "close" : servo6 = 0
+    """
+
+    theta1 = joints["theta1"]
+    theta2 = joints["theta2"]
+    theta3 = joints["theta3"]
+    theta4 = joints["theta4"]
+
+    # Servo 1: xoay đế
+    # Comment của bạn:
+    # 90 là giữa, xoay trái 90+, xoay phải 90-
+    servo1 = SERVO1_HOME + (theta1 - THETA1_HOME)
+
+    # Servo 2: vai
+    # Comment của bạn:
+    # 110 là home, lên 110+, xuống 110-
+    servo2 = SERVO2_HOME + (theta2 - THETA2_HOME)
+
+    # Servo 3: khuỷu
+    # Comment của bạn:
+    # 80 là home, lên 80-, xuống 80+
+    # Vì vậy chiều servo ngược với chiều theta3 hình học
+    servo3 = SERVO3_HOME - (theta3 - THETA3_HOME)
+
+    # Servo 4: xoay cổ tay trái/phải
+    # IK phẳng hiện tại chưa tính roll cổ tay, nên giữ 90
+    servo4 = SERVO4_HOME
+
+    # Servo 5: gập cổ tay lên/xuống
+    # Comment của bạn:
+    # 90 là home, xuống 90-, lên 90+
+    servo5 = SERVO5_HOME + (theta4 - THETA4_HOME)
+
+    # Servo 6: kẹp
+    if gripper == "open":
+        servo6 = SERVO6_OPEN
+    elif gripper == "close":
+        servo6 = SERVO6_CLOSE
+    else:
+        raise ValueError("gripper chỉ được chọn là 'open' hoặc 'close'.")
+
+    return {
+        "servo1": servo1,
+        "servo2": servo2,
+        "servo3": servo3,
+        "servo4": servo4,
+        "servo5": servo5,
+        "servo6": servo6
+    }
+
+
+# ============================================================
+# GIỚI HẠN GÓC SERVO
+# ============================================================
+
+def limit_servo_angles(servos):
+    """
+    Giới hạn góc servo trong khoảng 0 - 180 độ.
+    Sau này có thể sửa giới hạn riêng từng khớp nếu cần.
+    """
+
+    limited = {}
+
+    for name, angle in servos.items():
+        limited[name] = max(0, min(180, angle))
+
+    return limited
+
+
+# ============================================================
+# IN KẾT QUẢ
+# ============================================================
+
+def print_result(target, joints, servos):
+    x, y, z = target
+
+    print()
+    print("================================================")
+    print(f"Tọa độ mục tiêu: x = {x:.3f} m, y = {y:.3f} m, z = {z:.3f} m")
+    print("================================================")
+
+    print("\n--- GÓC HÌNH HỌC IK ---")
+    print(f"theta1 - Đế      : {joints['theta1']:.2f}°")
+    print(f"theta2 - Vai     : {joints['theta2']:.2f}°")
+    print(f"theta3 - Khuỷu   : {joints['theta3']:.2f}°")
+    print(f"theta4 - Cổ tay  : {joints['theta4']:.2f}°")
+
+    print("\n--- GÓC SERVO THỰC TẾ ---")
+    print(f"Servo 1 - Đế             : {servos['servo1']:.2f}°")
+    print(f"Servo 2 - Vai            : {servos['servo2']:.2f}°")
+    print(f"Servo 3 - Khuỷu          : {servos['servo3']:.2f}°")
+    print(f"Servo 4 - Xoay cổ tay    : {servos['servo4']:.2f}°")
+    print(f"Servo 5 - Gập cổ tay     : {servos['servo5']:.2f}°")
+    print(f"Servo 6 - Kẹp            : {servos['servo6']:.2f}°")
+
+
+# ============================================================
+# TEST 1 ĐIỂM
+# ============================================================
+
+def test_one_point():
     target_x = 0.20
-    target_y = 0.10
-    target_z = 0.15
-    
+    target_y = 0.00
+    target_z = 0.10
+
+    phi_deg = 0.0
+    elbow = "down"
+    gripper = "open"
+
     try:
-        joints = inverse_kinematics(target_x, target_y, target_z, phi_deg=0.0)
-        
-        print(f"--- Kết quả Động học nghịch cho vị trí ({target_x}, {target_y}, {target_z}) ---")
-        print(f"Khớp 1 (Xoay đế) : {joints['theta1']:.2f}°")
-        print(f"Khớp 2 (Vai)     : {joints['theta2']:.2f}°")
-        print(f"Khớp 3 (Khuỷu)   : {joints['theta3']:.2f}°")
-        print(f"Khớp 4 (Cổ tay)  : {joints['theta4']:.2f}°")
-        
+        joints = inverse_kinematics(
+            target_x,
+            target_y,
+            target_z,
+            phi_deg=phi_deg,
+            elbow=elbow
+        )
+
+        servos = ik_to_servo_angles(
+            joints,
+            gripper=gripper
+        )
+
+        servos = limit_servo_angles(servos)
+
+        print_result(
+            target=(target_x, target_y, target_z),
+            joints=joints,
+            servos=servos
+        )
+
     except ValueError as e:
-        print(e)
+        print("Lỗi:", e)
+
+
+# ============================================================
+# TEST HOME
+# ============================================================
+
+def test_home_forward_check():
+    """
+    Hàm này chỉ in ra quy ước home để bạn kiểm tra lại.
+    Tư thế home đang giả định:
+
+    servo1 = 90  <=> theta1 = 0°
+    servo2 = 110 <=> theta2 = 90°
+    servo3 = 80  <=> theta3 = -90°
+    servo5 = 90  <=> theta4 = 0°
+    """
+
+    joints_home = {
+        "theta1": THETA1_HOME,
+        "theta2": THETA2_HOME,
+        "theta3": THETA3_HOME,
+        "theta4": THETA4_HOME
+    }
+
+    servos_home_open = ik_to_servo_angles(joints_home, gripper="open")
+    servos_home_close = ik_to_servo_angles(joints_home, gripper="close")
+
+    print("\n========== KIỂM TRA HOME ==========")
+
+    print("\nHome với kẹp mở:")
+    for name, angle in servos_home_open.items():
+        print(f"{name}: {angle:.2f}°")
+
+    print("\nHome với kẹp đóng:")
+    for name, angle in servos_home_close.items():
+        print(f"{name}: {angle:.2f}°")
+
+
+# ============================================================
+# NHẬP TỌA ĐỘ TỪ TERMINAL
+# ============================================================
+
+def terminal_mode():
+    print("==============================================")
+    print("CHƯƠNG TRÌNH IK TAY MÁY 6 SERVO")
+    print("Đơn vị tọa độ: mét")
+    print("Ví dụ nhập: 0.20 0.10 0.15")
+    print("Nhập q để thoát")
+    print("==============================================")
+
+    while True:
+        user_input = input("\nNhập x y z: ").strip()
+
+        if user_input.lower() == "q":
+            print("Đã thoát chương trình.")
+            break
+
+        parts = user_input.split()
+
+        if len(parts) != 3:
+            print("Sai định dạng. Ví dụ đúng: 0.20 0.10 0.15")
+            continue
+
+        try:
+            x = float(parts[0])
+            y = float(parts[1])
+            z = float(parts[2])
+
+            phi_input = input("Nhập phi_deg, bỏ trống = 0: ").strip()
+            if phi_input == "":
+                phi_deg = 0.0
+            else:
+                phi_deg = float(phi_input)
+
+            elbow_input = input("Chọn elbow up/down, bỏ trống = down: ").strip()
+            if elbow_input == "":
+                elbow = "down"
+            else:
+                elbow = elbow_input.lower()
+
+            gripper_input = input("Chọn gripper open/close, bỏ trống = open: ").strip()
+            if gripper_input == "":
+                gripper = "open"
+            else:
+                gripper = gripper_input.lower()
+
+            joints = inverse_kinematics(
+                x,
+                y,
+                z,
+                phi_deg=phi_deg,
+                elbow=elbow
+            )
+
+            servos = ik_to_servo_angles(
+                joints,
+                gripper=gripper
+            )
+
+            servos = limit_servo_angles(servos)
+
+            print_result(
+                target=(x, y, z),
+                joints=joints,
+                servos=servos
+            )
+
+            print("\n--- DÒNG GÓC ĐỂ COPY SANG ARDUINO/ESP32 ---")
+            print(
+                f"moveToAngles("
+                f"{servos['servo1']:.0f}, "
+                f"{servos['servo2']:.0f}, "
+                f"{servos['servo3']:.0f}, "
+                f"{servos['servo4']:.0f}, "
+                f"{servos['servo5']:.0f}, "
+                f"{servos['servo6']:.0f}"
+                f");"
+            )
+
+        except ValueError as e:
+            print("Lỗi:", e)
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+
+    # Test nhanh 1 điểm cố định
+    test_one_point()
+
+    # Test lại home
+    test_home_forward_check()
+
+    # Bật chế độ nhập terminal
+    terminal_mode()

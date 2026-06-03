@@ -12,8 +12,8 @@ const int SERVO1_PIN = 23;
 const int SERVO2_PIN = 22;
 const int SERVO3_PIN = 21;
 const int SERVO4_PIN = 19;
-const int SERVO5_PIN = 18;
-const int SERVO6_PIN = 5;
+const int SERVO5_PIN = 5;
+const int SERVO6_PIN = 17
 
 // Góc hiện tại của từng servo
 int angle1 = 90; // 1 - 90, xoay trai 90+, xoay phai 90-

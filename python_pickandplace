@@ -1,0 +1,638 @@
+import numpy as np
+import serial
+import time
+
+
+# ============================================================
+# CẤU HÌNH SERIAL
+# ============================================================
+
+SERIAL_PORT = "COM11"
+BAUD_RATE = 115200
+
+
+# ============================================================
+# CẤU HÌNH KÍCH THƯỚC ROBOT
+# Đơn vị: mét
+# ============================================================
+
+d1 = 0.094   # chiều cao từ mặt đế lên khớp vai
+L1 = 0.14    # chiều dài khâu 1
+L2 = 0.103   # chiều dài khâu 2
+L3 = 0.11    # từ cổ tay tới EE / đầu kẹp
+
+
+# ============================================================
+# GÓC HOME THỰC TẾ CỦA SERVO
+# ============================================================
+
+SERVO1_HOME = 90
+SERVO2_HOME = 110
+SERVO3_HOME = 80
+SERVO4_HOME = 90
+SERVO5_HOME = 90
+
+SERVO6_OPEN = 80
+SERVO6_CLOSE = 0
+
+
+# ============================================================
+# GÓC HÌNH HỌC TƯƠNG ỨNG VỚI HOME
+# ============================================================
+
+THETA1_HOME = 0
+THETA2_HOME = 90
+THETA3_HOME = -90
+THETA4_HOME = 0
+
+
+# ============================================================
+# ĐỘNG HỌC NGHỊCH
+# ============================================================
+
+def inverse_kinematics(x, y, z, phi_deg=0.0, elbow="down"):
+    phi = np.radians(phi_deg)
+
+    # Góc đế
+    theta1 = np.arctan2(y, x)
+
+    # Chiếu tọa độ về mặt phẳng 2D
+    r = np.sqrt(x**2 + y**2)
+    z_prime = z - d1
+
+    # Tâm cổ tay
+    r_w = r - L3 * np.cos(phi)
+    z_w = z_prime - L3 * np.sin(phi)
+
+    # Giải tam giác L1 - L2
+    D = (r_w**2 + z_w**2 - L1**2 - L2**2) / (2 * L1 * L2)
+
+    if abs(D) > 1.0:
+        raise ValueError("Vị trí mục tiêu nằm ngoài tầm với hình học của robot!")
+
+    if elbow == "down":
+        theta3 = np.arctan2(-np.sqrt(1 - D**2), D)
+    elif elbow == "up":
+        theta3 = np.arctan2(np.sqrt(1 - D**2), D)
+    else:
+        raise ValueError("elbow chỉ được chọn là 'down' hoặc 'up'.")
+
+    gamma = np.arctan2(z_w, r_w)
+
+    alpha = np.arctan2(
+        L2 * np.sin(theta3),
+        L1 + L2 * np.cos(theta3)
+    )
+
+    theta2 = gamma - alpha
+
+    # Góc cổ tay để đạt hướng phi
+    theta4 = phi - theta2 - theta3
+
+    return {
+        "theta1": np.degrees(theta1),
+        "theta2": np.degrees(theta2),
+        "theta3": np.degrees(theta3),
+        "theta4": np.degrees(theta4)
+    }
+
+
+# ============================================================
+# ĐỔI IK SANG GÓC SERVO
+# ============================================================
+
+def ik_to_servo_angles(joints, gripper_angle=SERVO6_OPEN):
+    theta1 = joints["theta1"]
+    theta2 = joints["theta2"]
+    theta3 = joints["theta3"]
+    theta4 = joints["theta4"]
+
+    # Servo 1: đế
+    servo1 = SERVO1_HOME + (theta1 - THETA1_HOME)
+
+    # Servo 2: vai
+    servo2 = SERVO2_HOME + (theta2 - THETA2_HOME)
+
+    # Servo 3: khuỷu, chiều ngược với theta3
+    servo3 = SERVO3_HOME - (theta3 - THETA3_HOME)
+
+    # Servo 4: xoay cổ tay trái/phải, IK phẳng chưa dùng
+    servo4 = SERVO4_HOME
+
+    # Servo 5: gập cổ tay lên/xuống
+    servo5 = SERVO5_HOME + (theta4 - THETA4_HOME)
+
+    # Servo 6: gripper
+    servo6 = gripper_angle
+
+    return {
+        "servo1": servo1,
+        "servo2": servo2,
+        "servo3": servo3,
+        "servo4": servo4,
+        "servo5": servo5,
+        "servo6": servo6
+    }
+
+
+# ============================================================
+# GIỚI HẠN GÓC SERVO
+# ============================================================
+
+def limit_servo_angles(servos):
+    limited = {}
+
+    limited["servo1"] = max(0, min(180, servos["servo1"]))
+    limited["servo2"] = max(0, min(180, servos["servo2"]))
+    limited["servo3"] = max(0, min(180, servos["servo3"]))
+    limited["servo4"] = max(0, min(180, servos["servo4"]))
+    limited["servo5"] = max(0, min(180, servos["servo5"]))
+    limited["servo6"] = max(0, min(80, servos["servo6"]))
+
+    return limited
+
+
+# ============================================================
+# IN KẾT QUẢ
+# ============================================================
+
+def print_result(target, phi_deg, elbow, action, joints, servos):
+    x, y, z = target
+
+    print()
+    print("================================================")
+    print("KẾT QUẢ TÍNH TOÁN")
+    print("================================================")
+    print(f"Tọa độ mục tiêu: x = {x:.3f} m, y = {y:.3f} m, z = {z:.3f} m")
+    print(f"phi_deg         : {phi_deg:.2f}°")
+    print(f"elbow           : {elbow}")
+    print(f"action          : {action}")
+
+    print("\n--- GÓC HÌNH HỌC IK ---")
+    print(f"theta1 - Đế      : {joints['theta1']:.2f}°")
+    print(f"theta2 - Vai     : {joints['theta2']:.2f}°")
+    print(f"theta3 - Khuỷu   : {joints['theta3']:.2f}°")
+    print(f"theta4 - Cổ tay  : {joints['theta4']:.2f}°")
+
+    print("\n--- GÓC SERVO ---")
+    print(f"Servo 1 - Đế             : {servos['servo1']:.2f}°")
+    print(f"Servo 2 - Vai            : {servos['servo2']:.2f}°")
+    print(f"Servo 3 - Khuỷu          : {servos['servo3']:.2f}°")
+    print(f"Servo 4 - Xoay cổ tay    : {servos['servo4']:.2f}°")
+    print(f"Servo 5 - Gập cổ tay     : {servos['servo5']:.2f}°")
+    print(f"Servo 6 - Kẹp            : {servos['servo6']:.2f}°")
+
+
+# ============================================================
+# GỬI LỆNH SANG ESP32
+# ============================================================
+
+def send_motion_to_esp32(ser, action, servos):
+    """
+    Gửi lệnh sang ESP32 dạng:
+    move  s1 s2 s3 s4 s5 s6
+    pick  s1 s2 s3 s4 s5 s6
+    place s1 s2 s3 s4 s5 s6
+    """
+
+    if action not in ["move", "pick", "place"]:
+        raise ValueError("action chỉ được chọn là move, pick hoặc place.")
+
+    s1 = round(servos["servo1"])
+    s2 = round(servos["servo2"])
+    s3 = round(servos["servo3"])
+    s4 = round(servos["servo4"])
+    s5 = round(servos["servo5"])
+    s6 = round(servos["servo6"])
+
+    command = f"{action} {s1} {s2} {s3} {s4} {s5} {s6}\n"
+
+    print("\nLệnh gửi sang ESP32:")
+    print(command.strip())
+
+    ser.write(command.encode("utf-8"))
+
+    response = ser.readline().decode("utf-8", errors="ignore").strip()
+
+    if response:
+        print("ESP32:", response)
+    else:
+        print("Không nhận được phản hồi từ ESP32.")
+
+
+def send_home_to_esp32(ser):
+    command = "home\n"
+    print("\nLệnh gửi sang ESP32:")
+    print(command.strip())
+
+    ser.write(command.encode("utf-8"))
+
+    response = ser.readline().decode("utf-8", errors="ignore").strip()
+
+    if response:
+        print("ESP32:", response)
+    else:
+        print("Không nhận được phản hồi từ ESP32.")
+
+
+def send_print_to_esp32(ser):
+    command = "print\n"
+    print("\nLệnh gửi sang ESP32:")
+    print(command.strip())
+
+    ser.write(command.encode("utf-8"))
+
+    response = ser.readline().decode("utf-8", errors="ignore").strip()
+
+    if response:
+        print("ESP32:", response)
+    else:
+        print("Không nhận được phản hồi từ ESP32.")
+
+
+# ============================================================
+# TÍNH GÓC SERVO TỪ POSE
+# ============================================================
+
+def compute_servos_from_pose(
+    pose,
+    phi_deg=0.0,
+    elbow="down",
+    gripper_angle=SERVO6_OPEN
+):
+    x, y, z = pose
+
+    joints = inverse_kinematics(
+        x=x,
+        y=y,
+        z=z,
+        phi_deg=phi_deg,
+        elbow=elbow
+    )
+
+    servos = ik_to_servo_angles(
+        joints=joints,
+        gripper_angle=gripper_angle
+    )
+
+    servos = limit_servo_angles(servos)
+
+    return joints, servos
+
+
+# ============================================================
+# PICK
+# ============================================================
+
+def execute_pick(
+    ser,
+    pick_pose,
+    phi_deg=0.0,
+    elbow="down"
+):
+    """
+    Pick:
+    - Tính IK tại vị trí pick
+    - Gửi lệnh pick sang ESP32
+    - ESP32 tự mở gripper, đi tới vật, rồi kẹp từ từ về 0
+    """
+
+    joints, servos = compute_servos_from_pose(
+        pose=pick_pose,
+        phi_deg=phi_deg,
+        elbow=elbow,
+        gripper_angle=SERVO6_CLOSE
+    )
+
+    print_result(
+        target=pick_pose,
+        phi_deg=phi_deg,
+        elbow=elbow,
+        action="pick",
+        joints=joints,
+        servos=servos
+    )
+
+    command_preview = (
+        f"pick "
+        f"{round(servos['servo1'])} "
+        f"{round(servos['servo2'])} "
+        f"{round(servos['servo3'])} "
+        f"{round(servos['servo4'])} "
+        f"{round(servos['servo5'])} "
+        f"{round(servos['servo6'])}"
+    )
+
+    print("\nLệnh dự kiến:")
+    print(command_preview)
+
+    confirm = input("\nGửi lệnh PICK sang ESP32? y/n: ").strip().lower()
+
+    if confirm == "y":
+        send_motion_to_esp32(ser, "pick", servos)
+        return True
+
+    print("Đã hủy PICK.")
+    return False
+
+
+# ============================================================
+# PLACE PLANNING
+# ============================================================
+
+def execute_place_planning(
+    ser,
+    current_pose,
+    place_pose,
+    phi_deg=0.0,
+    elbow="down",
+    lift_height=0.05
+):
+    """
+    Planning cho place:
+
+    Bước 1:
+        Nâng vật lên 5cm tại vị trí pick:
+        (x_pick, y_pick, z_pick + 0.05)
+
+    Bước 2:
+        Giữ nguyên độ cao đó, di chuyển ngang tới tọa độ place:
+        (x_place, y_place, z_pick + 0.05)
+
+    Bước 3:
+        Hạ xuống vị trí place:
+        (x_place, y_place, z_place)
+
+    Bước 4:
+        Mở gripper
+    """
+
+    x_pick, y_pick, z_pick = current_pose
+    x_place, y_place, z_place = place_pose
+
+    z_safe = z_pick + lift_height
+
+    pose_lift = (
+        x_pick,
+        y_pick,
+        z_safe
+    )
+
+    pose_transfer = (
+        x_place,
+        y_place,
+        z_safe
+    )
+
+    pose_lower = (
+        x_place,
+        y_place,
+        z_place
+    )
+
+    trajectory = [
+        ("move", pose_lift, SERVO6_CLOSE),
+        ("move", pose_transfer, SERVO6_CLOSE),
+        ("place", pose_lower, SERVO6_OPEN)
+    ]
+
+    print()
+    print("========== PLANNING PLACE ==========")
+    print(f"Pose pick hiện tại : {current_pose}")
+    print(f"Nâng lên           : {pose_lift}")
+    print(f"Di chuyển ngang    : {pose_transfer}")
+    print(f"Hạ xuống place     : {pose_lower}")
+    print("====================================")
+
+    confirm_all = input("\nGửi toàn bộ planning PLACE? y/n: ").strip().lower()
+
+    if confirm_all != "y":
+        print("Đã hủy PLACE.")
+        return False
+
+    for step_index, (action, pose, gripper_angle) in enumerate(trajectory, start=1):
+        print()
+        print(f"========== STEP {step_index}: {action.upper()} ==========")
+
+        try:
+            joints, servos = compute_servos_from_pose(
+                pose=pose,
+                phi_deg=phi_deg,
+                elbow=elbow,
+                gripper_angle=gripper_angle
+            )
+
+            print_result(
+                target=pose,
+                phi_deg=phi_deg,
+                elbow=elbow,
+                action=action,
+                joints=joints,
+                servos=servos
+            )
+
+            send_motion_to_esp32(ser, action, servos)
+
+            # Nghỉ nhẹ giữa các bước
+            time.sleep(0.5)
+
+        except ValueError as e:
+            print("Lỗi ở bước planning:", e)
+            return False
+
+    print("\nHoàn thành PLACE.")
+    return True
+
+
+# ============================================================
+# KẾT NỐI ESP32
+# ============================================================
+
+def connect_esp32():
+    print("Đang kết nối ESP32...")
+    print(f"Cổng: {SERIAL_PORT}")
+    print(f"Baud : {BAUD_RATE}")
+
+    ser = serial.Serial(
+        port=SERIAL_PORT,
+        baudrate=BAUD_RATE,
+        timeout=3
+    )
+
+    # Chờ ESP32 reset sau khi mở Serial
+    time.sleep(2)
+
+    # Xóa toàn bộ phản hồi cũ
+    while ser.in_waiting:
+        ser.readline()
+
+    ser.reset_input_buffer()
+    ser.reset_output_buffer()
+
+    print("Đã kết nối ESP32.")
+    print("Lưu ý: tắt Serial Monitor trong Arduino IDE trước khi chạy Python.")
+
+    return ser
+
+
+# ============================================================
+# PHÂN TÍCH INPUT
+# ============================================================
+
+def parse_user_input(user_input):
+    """
+    Hỗ trợ các dạng:
+
+    pick 0.20 0.10 0.15
+    place 0.10 -0.10 0.15
+    0.20 0.10 0.15
+    """
+
+    parts = user_input.split()
+
+    if len(parts) == 4 and parts[0].lower() in ["pick", "place"]:
+        action = parts[0].lower()
+        x = float(parts[1])
+        y = float(parts[2])
+        z = float(parts[3])
+        return action, (x, y, z)
+
+    if len(parts) == 3:
+        action = None
+        x = float(parts[0])
+        y = float(parts[1])
+        z = float(parts[2])
+        return action, (x, y, z)
+
+    raise ValueError(
+        "Sai định dạng. Ví dụ đúng: pick 0.20 0.10 0.15 hoặc place 0.10 -0.10 0.15"
+    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+    try:
+        ser = connect_esp32()
+    except serial.SerialException as e:
+        print("Không thể kết nối ESP32.")
+        print("Lỗi:", e)
+        print("Kiểm tra lại:")
+        print("- ESP32 có đang cắm không")
+        print("- Cổng COM có đúng là COM11 không")
+        print("- Serial Monitor Arduino IDE đã tắt chưa")
+        return
+
+    current_object_pose = None
+
+    print()
+    print("================================================")
+    print("CHƯƠNG TRÌNH ĐIỀU KHIỂN TAY MÁY PICK & PLACE")
+    print("================================================")
+    print("Nhập tọa độ theo đơn vị mét.")
+    print()
+    print("Ví dụ:")
+    print("  pick 0.20 0.10 0.15")
+    print("  place 0.10 -0.10 0.15")
+    print()
+    print("Lệnh nhanh:")
+    print("  h = về home")
+    print("  p = in góc hiện tại")
+    print("  q = thoát")
+    print("================================================")
+
+    while True:
+        user_input = input("\nNhập lệnh: ").strip()
+
+        if user_input.lower() == "q":
+            print("Thoát chương trình.")
+            break
+
+        if user_input.lower() == "h":
+            send_home_to_esp32(ser)
+            current_object_pose = None
+            continue
+
+        if user_input.lower() == "p":
+            send_print_to_esp32(ser)
+            continue
+
+        try:
+            action, pose = parse_user_input(user_input)
+
+            phi_input = input("Nhập phi_deg, bỏ trống = 0: ").strip()
+            if phi_input == "":
+                phi_deg = 0.0
+            else:
+                phi_deg = float(phi_input)
+
+            elbow_input = input("Chọn elbow up/down, bỏ trống = down: ").strip().lower()
+            if elbow_input == "":
+                elbow = "down"
+            else:
+                elbow = elbow_input
+
+            if elbow not in ["up", "down"]:
+                print("elbow không hợp lệ. Chỉ chọn up hoặc down.")
+                continue
+
+            # Nếu người dùng chỉ nhập x y z, hỏi action sau
+            if action is None:
+                action_input = input("Chọn hành động pick/place, bỏ trống = pick: ").strip().lower()
+                if action_input == "":
+                    action = "pick"
+                else:
+                    action = action_input
+
+            if action not in ["pick", "place"]:
+                print("action không hợp lệ. Chỉ chọn pick hoặc place.")
+                continue
+
+            # ---------------- PICK ----------------
+            if action == "pick":
+                ok = execute_pick(
+                    ser=ser,
+                    pick_pose=pose,
+                    phi_deg=phi_deg,
+                    elbow=elbow
+                )
+
+                if ok:
+                    current_object_pose = pose
+                    print(f"\nĐã lưu vị trí vật hiện tại: {current_object_pose}")
+
+            # ---------------- PLACE ----------------
+            elif action == "place":
+                if current_object_pose is None:
+                    print("\nChưa có vị trí pick trước đó.")
+                    print("Hãy thực hiện lệnh pick trước, sau đó mới place.")
+                    continue
+
+                ok = execute_place_planning(
+                    ser=ser,
+                    current_pose=current_object_pose,
+                    place_pose=pose,
+                    phi_deg=phi_deg,
+                    elbow=elbow,
+                    lift_height=0.05
+                )
+
+                if ok:
+                    current_object_pose = None
+                    print("\nĐã place xong, reset vị trí vật hiện tại.")
+
+        except ValueError as e:
+            print("Lỗi:", e)
+
+        except serial.SerialException as e:
+            print("Lỗi Serial:", e)
+            break
+
+    ser.close()
+    print("Đã đóng kết nối Serial.")
+
+
+if __name__ == "__main__":
+    main()
